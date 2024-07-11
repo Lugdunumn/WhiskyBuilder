@@ -10,11 +10,32 @@ jobs:
     runs-on: macos-13
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Tap homebrew-apple
-        run: brew tap apple/apple http://github.com/Whisky-App/homebrew-apple
+        run: brew tap whisky/apple http://github.com/Whisky-App/homebrew-apple
+      - name: Check cache for compiler
+        id: compiler-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/Cellar/game-porting-toolkit-compiler
+          key: game-porting-toolkit-compiler-0.1
+      - name: Install compiler
+        if: steps.compiler-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install whisky/apple/game-porting-toolkit-compiler
+      - name: Save compiler to cache
+        if: steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: game-porting-toolkit-compiler-0.1
+          path: /usr/local/Cellar/game-porting-toolkit-compiler
+      - name: Relink compiler
+        if: steps.compiler-cache.outputs.cache-hit == 'true'
+        run: |
+          brew install whisky/apple/game-porting-toolkit-compiler
+          ln -s /usr/local/Cellar/game-porting-toolkit-compiler/0.1/ /usr/local/opt/game-porting-toolkit-compiler
       - name: Install taps
-        run: brew install apple/apple/game-porting-toolkit winetricks
+        run: brew install whisky/apple/game-porting-toolkit winetricks || true
       - name: Trim Files
         run: |
           rm -rf $(brew --prefix game-porting-toolkit)/.brew
@@ -39,6 +60,9 @@ jobs:
       - name: Copy Version .plist
         run: |
           cp -a GPTKVersion.plist Libraries/
+      - name: Download verbs list
+        run: |
+          curl https://raw.githubusercontent.com/Winetricks/winetricks/master/files/verbs/all.txt -o Libraries/verbs.txt
       - name: Install GPTK
         run: |
           ditto GPTK/redist/lib/ Libraries/Wine/lib/
@@ -48,7 +72,20 @@ jobs:
         run: |
           tar -zcf Libraries.tar.gz Libraries
       - name: Upload Libraries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Libraries
           path: Libraries.tar.gz
+      - name: Upload Libraries to WhiskyBucket
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ENV_AUTH: true
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_ENDPOINT }}
+        run: |
+          brew install rclone
+          zip Libraries.zip Libraries.tar.gz
+          rclone copy Libraries.zip r2:whisky-bucket
+          rclone copy GPTKVersion.plist r2:whisky-bucket
